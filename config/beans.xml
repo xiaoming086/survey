@@ -1,0 +1,143 @@
+<?xml version="1.0"?>
+<beans xmlns="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:context="http://www.springframework.org/schema/context" xmlns:tx="http://www.springframework.org/schema/tx" xmlns:aop="http://www.springframework.org/schema/aop" xmlns:cache="http://www.springframework.org/schema/cache" xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.0.xsd http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.0.xsd http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx-3.0.xsd http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-3.0.xsd http://www.springframework.org/schema/cache http://www.springframework.org/schema/cache/spring-cache-3.1.xsd ">
+	<!-- 组件扫描 -->
+	<context:component-scan
+		base-package="cn.itcast.surveypark.listener,cn.itcast.surveypark.dao.impl,cn.itcast.surveypark.service.impl,cn.itcast.surveypark.struts2.action" />
+
+	<!-- 分散配置 -->
+	<context:property-placeholder location="classpath:jdbc.properties" />
+
+	<!-- 数据源(主库) -->
+	<bean id="dataSource_main" class="com.mchange.v2.c3p0.ComboPooledDataSource">
+		<property name="driverClass" value="${jdbc.driverclass}" />
+		<property name="jdbcUrl" value="${jdbc.url}" />
+		<property name="user" value="${jdbc.username}" />
+		<property name="password" value="${jdbc.password}" />
+
+		<property name="maxPoolSize" value="${c3p0.pool.size.max}" />
+		<property name="minPoolSize" value="${c3p0.pool.size.min}" />
+		<property name="initialPoolSize" value="${c3p0.pool.size.ini}" />
+		<property name="acquireIncrement" value="${c3p0.pool.size.increment}" />
+	</bean>
+
+	<!-- 数据源(从库) -->
+	<bean id="dataSource_1" parent="dataSource_main">
+		<property name="jdbcUrl"
+			value="jdbc:mysql://localhost:3306/lsn_surveypark0909_1" />
+	</bean>
+
+
+	<!-- 数据源路由器 -->
+	<bean id="dataSource_router"
+		class="cn.itcast.surveypark.datasource.SurveyparkDataSourceRouter">
+		<property name="targetDataSources">
+			<map>
+				<entry key="odd" value-ref="dataSource_main" />
+				<entry key="even" value-ref="dataSource_1" />
+			</map>
+		</property>
+		<property name="defaultTargetDataSource" ref="dataSource_main" />
+	</bean>
+
+	<!-- 本地会话工厂bean,spring整合hibernate的核心入口 -->
+	<bean id="sessionFactory"
+		class="org.springframework.orm.hibernate3.LocalSessionFactoryBean">
+		<!-- 注入数据源 -->
+		<property name="dataSource" ref="dataSource_router" />
+		<!-- 指定hibernate配置文件 -->
+		<property name="configLocation" value="classpath:hibernate.cfg.xml" />
+		<!-- 指定映射文件目录 -->
+		<property name="mappingDirectoryLocations">
+			<list>
+				<value>classpath:cn/itcast/surveypark/domain</value>
+			</list>
+		</property>
+	</bean>
+
+	<!-- 事务管理器,在service层面上实现事务管理,而且达到平台无关性 -->
+	<bean id="txManager"
+		class="org.springframework.orm.hibernate3.HibernateTransactionManager">
+		<property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+
+	<!-- 配置事务通知 -->
+	<tx:advice id="txAdvice" transaction-manager="txManager">
+		<tx:attributes>
+			<tx:method name="save*" propagation="REQUIRED" isolation="DEFAULT" />
+			<tx:method name="update*" propagation="REQUIRED" isolation="DEFAULT" />
+			<tx:method name="delete*" propagation="REQUIRED" isolation="DEFAULT" />
+			<tx:method name="batch*" propagation="REQUIRED" isolation="DEFAULT" />
+			<tx:method name="new*" propagation="REQUIRED" isolation="DEFAULT" />
+
+			<tx:method name="get*" propagation="REQUIRED" isolation="DEFAULT"
+				read-only="true" />
+			<tx:method name="load*" propagation="REQUIRED" isolation="DEFAULT"
+				read-only="true" />
+			<tx:method name="find*" propagation="REQUIRED" isolation="DEFAULT"
+				read-only="true" />
+
+			<tx:method name="*" propagation="REQUIRED" isolation="DEFAULT" />
+		</tx:attributes>
+	</tx:advice>
+
+	<!-- logger -->
+	<bean id="logger" class="cn.itcast.surveypark.advice.Logger">
+		<property name="logService" ref="logService" />
+	</bean>
+	
+	<!-- 缓存管理器工厂(创建各种缓存管理器) -->
+	<bean id="ehcache" class="org.springframework.cache.ehcache.EhCacheManagerFactoryBean">
+		<!-- ehcache配置文件,配置的是缓存的过期策略 -->
+		<property name="configLocation" value="classpath:ehcache.xml" />
+	</bean>
+	
+	<!-- ehcache缓存管理器 -->
+	<bean id="cacheManager" class="org.springframework.cache.ehcache.EhCacheCacheManager">
+		<property name="cacheManager" ref="ehcache" />
+	</bean>
+	
+	<!-- 缓存key生成器 -->
+	<bean id="surveyKeyGenerator" class="cn.itcast.surveypark.cache.SurveyKeyGenerator" />
+	
+	<!-- 定义缓存通知 -->
+	<cache:advice id="cacheAdivce" cache-manager="cacheManager" key-generator="surveyKeyGenerator">
+		<cache:caching cache="surveyCache">
+			<!-- 缓存数据 -->
+			<cache:cacheable method="get*"/>
+			<cache:cacheable method="load*"/>
+			<cache:cacheable method="find*"/>
+			<cache:cacheable method="is*"/>
+			
+			<!-- 移除缓存数据,all-entries所有条目-->			
+			<cache:cache-evict method="save*" all-entries="true"/>
+			<cache:cache-evict method="update*" all-entries="true"/>
+			<cache:cache-evict method="delete*" all-entries="true"/>
+			<cache:cache-evict method="batch*" all-entries="true"/>
+		</cache:caching>
+	</cache:advice>
+	
+	<!-- aop事务配置 -->
+	<aop:config>
+		<!-- 事务切入点 -->
+		<aop:pointcut expression="execution(* *..*Service.*(..))" id="txPointcut" />
+		<!-- 日志切入点 -->
+		<aop:pointcut expression="(execution(* *..*Service.save*(..))
+									or execution(* *..*Service.update*(..))
+									or execution(* *..*Service.delete*(..))
+									or execution(* *..*Service.batch*(..))
+									or execution(* *..*Service.new*(..))) and !bean(logService)"
+					id="loggerPointcut" />
+			
+		<!-- 事务通知 -->
+		<aop:advisor advice-ref="txAdvice" pointcut-ref="txPointcut" order="2" />
+		<!-- 缓存通知,只限于SurveyService的方法 -->
+		<aop:advisor advice-ref="cacheAdivce" 
+			pointcut="execution(* cn.itcast.surveypark.service.SurveyService.*(..)) and !execution(* cn.itcast.surveypark.service.SurveyService.saveAnswers(..))" 
+			order="0"/>
+		
+		<!-- 配置日志切面 -->
+		<aop:aspect id="loggerAspect" ref="logger" order="1">
+			<aop:around method="record" pointcut-ref="loggerPointcut" />
+		</aop:aspect>
+	</aop:config>
+</beans>
